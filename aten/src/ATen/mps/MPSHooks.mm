@@ -7,6 +7,7 @@
 #include <ATen/mps/MPSProfiler.h>
 #include <ATen/mps/MPSStream.h>
 #include <c10/util/Logging.h>
+#include <ATen/native/mps/OperationUtils.h>
 
 namespace at::mps {
 
@@ -90,6 +91,7 @@ void* MPSHooks::getDispatchQueue() const {
 
 void MPSHooks::emptyCache() const {
   at::mps::getIMPSAllocator()->emptyCache();
+  at::native::mps::MPSGraphCache::getInstance()->clear();
 }
 
 size_t MPSHooks::getCurrentAllocatedMemory() const {
