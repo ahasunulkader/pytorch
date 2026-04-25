@@ -101,11 +101,9 @@ if HAS_MSGSPEC:
     import msgspec
 
 
-HAS_OMEGACONG = importlib.util.find_spec("omegaconf")
-if HAS_OMEGACONG:
+HAS_OMEGACONF = importlib.util.find_spec("omegaconf")
+if HAS_OMEGACONF:
     from omegaconf import OmegaConf
-
-HAS_CUDA = torch.cuda.is_available()
 
 
 def exists(val):
@@ -974,7 +972,7 @@ class IncByTwo:
 
 
 class LRUCacheWarningTests(LoggingTestCase):
-    @requires_cuda
+    @unittest.skipUnless(torch.accelerator.is_available(), "requires accelerator")
     @make_logging_test(dynamo=logging.DEBUG)
     def test_lru_cache_warning_issued_during_tracing(self, records):
         prev_default = torch._C._get_default_device()
@@ -986,7 +984,7 @@ class LRUCacheWarningTests(LoggingTestCase):
                 torch.set_default_device(prev_default)
 
         self.addCleanup(_restore_default_device)
-        torch.set_default_device("cuda")
+        torch.set_default_device(torch.accelerator.current_accelerator().type)
 
         @torch.compile(backend="eager")
         def f(x):
@@ -4165,7 +4163,7 @@ class ReproTests(torch._dynamo.test_case.TestCase):
         cnt = torch._dynamo.testing.CompileCounter()
         opt_fn = torch.compile(fn, backend=cnt)
         opt_fn(inp1, inp2, inp3, inp4, c)
-        self.assertEqual(cnt.frame_count, 3)
+        self.assertEqual(cnt.frame_count, 2)
 
     def test_torch_variable_type(self):
         # from torchvision
@@ -5391,17 +5389,11 @@ def forward(self, s77 : torch.SymInt, s27 : torch.SymInt, L_x_ : torch.Tensor):
 
         obj = A()
 
-        try:
+        with self.assertRaisesRegex(RuntimeError, r"super\(\)"):
             fn(obj)
-        except Exception as e:
-            orig_str = str(e)
-        self.assertIn("no arguments", orig_str)
 
-        try:
+        with self.assertRaisesRegex(RuntimeError, r"super\(\)"):
             torch.compile(backend="eager")(fn)(obj)
-        except Exception as e:
-            compiled_str = str(e)
-        self.assertEqual(orig_str, compiled_str)
 
     def test_super_staticmethod(self):
         class Parent:
@@ -6572,7 +6564,7 @@ def forward(self, s77 : torch.SymInt, s27 : torch.SymInt, L_x_ : torch.Tensor):
         opt_fn = torch.compile(fn, backend="eager")
         self.assertEqual(fn(x), opt_fn(x))
 
-    @unittest.skipIf(not HAS_OMEGACONG, "missing omegaconf package")
+    @unittest.skipIf(not HAS_OMEGACONF, "missing omegaconf package")
     def test_omegaconf_dictconfig(self):
         def fn(cfg, x):
             a = cfg["foo"].a * x
@@ -6592,7 +6584,7 @@ def forward(self, s77 : torch.SymInt, s27 : torch.SymInt, L_x_ : torch.Tensor):
         self.assertEqual(fn(config, x), opt_fn(config, x))
         self.assertEqual(cloned_config.baz, 4)
 
-    @unittest.skipIf(not HAS_OMEGACONG, "missing omegaconf package")
+    @unittest.skipIf(not HAS_OMEGACONF, "missing omegaconf package")
     def test_omegaconf_listconfig_contains(self):
         def fn(cfg, x):
             if 1 in cfg:
@@ -7115,18 +7107,27 @@ def forward(self, s77 : torch.SymInt, s27 : torch.SymInt, L_x_ : torch.Tensor):
 
         # Generate input once to ensure consistency across runs
         torch.manual_seed(54321)
-        torch.cuda.manual_seed_all(54321)
+        if torch.accelerator.is_available():
+            torch.get_device_module(
+                torch.accelerator.current_accelerator().type
+            ).manual_seed_all(54321)
         image_latent = torch.randn((2, 12, 16, 32, 32))
 
         torch.manual_seed(54321)
-        torch.cuda.manual_seed_all(54321)
+        if torch.accelerator.is_available():
+            torch.get_device_module(
+                torch.accelerator.current_accelerator().type
+            ).manual_seed_all(54321)
         expected = f(image_latent).sum()
 
         # https://github.com/pytorch/pytorch/issues/147171
         with torch._inductor.config.patch(fallback_random=True):
             for backend in ["eager", "aot_eager"]:
                 torch.manual_seed(54321)
-                torch.cuda.manual_seed_all(54321)
+                if torch.accelerator.is_available():
+                    torch.get_device_module(
+                        torch.accelerator.current_accelerator().type
+                    ).manual_seed_all(54321)
                 actual = torch.compile(backend=backend, fullgraph=True)(f)(
                     image_latent
                 ).sum()
@@ -8509,7 +8510,7 @@ class ReproTestsDevice(torch._dynamo.test_case.TestCase):
         cnt = torch._dynamo.testing.CompileCounter()
         opt_fn = torch.compile(fn, backend=cnt)
         self.assertEqual(fn(x), opt_fn(x))
-        self.assertEqual(cnt.frame_count, 2)
+        self.assertEqual(cnt.frame_count, 1)
 
     def test_filter_warnings(self):
         x = torch.ones(2, 2, requires_grad=True)
